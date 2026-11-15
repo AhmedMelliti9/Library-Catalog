@@ -40,6 +40,23 @@ Migrations are executed sequentially as raw SQL scripts located in `app/database
 
 ---
 
+## Environment Variables & Security Configuration
+
+All database connection strings and sensitive credentials are fully externalized to environment variables and loaded via `python-dotenv`.
+
+| Variable | Description | Example |
+|---|---|---|
+| `DATABASE_URL` | PostgreSQL connection URL for development / runtime | `postgresql://user:password@localhost:5432/library_catalog` |
+| `TEST_DATABASE_URL` | Separate PostgreSQL connection URL for automated integration tests | `postgresql://user:password@localhost:5432/library_catalog_test` |
+
+### Security Guarantees:
+- `.env` is listed in `.gitignore` and is **never committed** to source control.
+- `.env.example` provides a sanitized template with placeholder values.
+- Direct parameterized SQL queries (`%s`) are enforced throughout the repository layer to prevent SQL injection vulnerabilities.
+- Password and host information are never hardcoded in application logic or tests.
+
+---
+
 ## Setup & Running
 
 ### 1. Environment Configuration
