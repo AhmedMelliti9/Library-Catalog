@@ -27,3 +27,11 @@ class DuplicateISBNError(Exception):
 
 class InvalidAuthorError(Exception):
     pass
+
+
+class AuthorHasBooksError(Exception):
+    pass
+
+
+class DatabaseUnavailableError(Exception):
+    pass

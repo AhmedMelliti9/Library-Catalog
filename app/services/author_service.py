@@ -7,7 +7,7 @@ Raises domain exceptions that routes convert to HTTP responses.
 
 from app.repositories.author_repository import AuthorRepository
 from app.models.author import AuthorCreate, AuthorUpdate
-from app.exceptions import AuthorNotFoundError
+from app.exceptions import AuthorNotFoundError, AuthorHasBooksError
 
 _repo = AuthorRepository()
 
@@ -35,7 +35,12 @@ def update_author(author_id: int, data: AuthorUpdate) -> dict:
 
 
 def delete_author(author_id: int) -> None:
-    deleted = _repo.delete(author_id)
-    if not deleted:
+    author = _repo.get_by_id(author_id)
+    if author is None:
         raise AuthorNotFoundError(f"Author with id {author_id} not found.")
+    if _repo.has_books(author_id):
+        raise AuthorHasBooksError(
+            f"Cannot delete author with id {author_id} because they have associated books."
+        )
+    _repo.delete(author_id)
 

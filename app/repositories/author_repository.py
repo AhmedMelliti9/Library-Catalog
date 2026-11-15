@@ -81,6 +81,19 @@ class AuthorRepository:
         finally:
             conn.close()
 
+    def has_books(self, author_id: int) -> bool:
+        """Check if an author has any associated books in book_authors."""
+        conn = get_connection()
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "SELECT 1 FROM book_authors WHERE author_id = %s LIMIT 1",
+                    (author_id,),
+                )
+                return cursor.fetchone() is not None
+        finally:
+            conn.close()
+
     def delete(self, author_id: int) -> bool:
         """Delete an author by ID. Returns True if deleted, False if not found."""
         conn = get_connection()

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, status
 from app.models.author import AuthorCreate, AuthorUpdate, AuthorResponse
 from app.services import author_service
-from app.exceptions import AuthorNotFoundError
+from app.exceptions import AuthorNotFoundError, AuthorHasBooksError
 
 router = APIRouter(prefix="/authors", tags=["authors"])
 
@@ -38,3 +38,6 @@ def delete_author(author_id: int):
         author_service.delete_author(author_id)
     except AuthorNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except AuthorHasBooksError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
