@@ -1,4 +1,6 @@
 .env
+plan.md
+project.md
 __pycache__/
 *.pyc
 *.pyo

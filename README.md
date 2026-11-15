@@ -1,4 +1,4 @@
-# Library Catalog API (Project 05)
+# Library Catalog API
 
 A robust RESTful API and relational database layer for managing a public library's catalog of books and authors. Built with **FastAPI**, **PostgreSQL**, and raw parameterized SQL queries using **psycopg2** without an ORM.
 
