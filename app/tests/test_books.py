@@ -1,7 +1,8 @@
 """
 test_books.py
-Unit tests for BookRepository using the test database.
-The clean_database fixture in conftest.py truncates all tables before each test.
+Integration tests for books:
+- Repository unit tests
+- FastAPI endpoint HTTP integration tests (using client fixture)
 """
 
 import os
@@ -9,9 +10,6 @@ import pytest
 from dotenv import load_dotenv
 
 load_dotenv()
-
-# Point the app at the TEST database before importing anything that connects
-os.environ["DATABASE_URL"] = os.environ.get("TEST_DATABASE_URL", "")
 
 from app.repositories.book_repository import BookRepository
 from app.repositories.author_repository import AuthorRepository
@@ -47,7 +45,7 @@ def make_book(title="1984", isbn="9780451524935", genre="Dystopia", author_ids=N
 
 
 # ---------------------------------------------------------------------------
-# CREATE
+# REPOSITORY UNIT TESTS
 # ---------------------------------------------------------------------------
 
 def test_create_book_with_valid_author():
@@ -94,10 +92,6 @@ def test_create_book_with_duplicate_isbn_raises_error():
         ))
 
 
-# ---------------------------------------------------------------------------
-# GET BY ID
-# ---------------------------------------------------------------------------
-
 def test_get_by_id_returns_book_with_authors():
     book = make_book()
     fetched = book_repo.get_by_id(book["id"])
@@ -110,10 +104,6 @@ def test_get_by_id_returns_none_for_missing_book():
     result = book_repo.get_by_id(99999)
     assert result is None
 
-
-# ---------------------------------------------------------------------------
-# GET ALL — filtering
-# ---------------------------------------------------------------------------
 
 def test_get_all_returns_all_books():
     make_book(title="Book A", isbn="1000000000001", genre="Fiction")
@@ -155,26 +145,18 @@ def test_get_all_filter_by_author_id():
     assert result[0]["title"] == "Alice Book"
 
 
-# ---------------------------------------------------------------------------
-# UPDATE
-# ---------------------------------------------------------------------------
-
 def test_update_book_returns_updated_record():
     book = make_book()
     updated = book_repo.update(book["id"], BookUpdate(title="Updated Title", genre="Sci-Fi"))
     assert updated["title"] == "Updated Title"
     assert updated["genre"] == "Sci-Fi"
-    assert updated["isbn"] == book["isbn"]  # unchanged
+    assert updated["isbn"] == book["isbn"]
 
 
 def test_update_book_returns_none_for_missing_book():
     result = book_repo.update(99999, BookUpdate(title="Ghost"))
     assert result is None
 
-
-# ---------------------------------------------------------------------------
-# CHECKOUT & RETURN
-# ---------------------------------------------------------------------------
 
 def test_checkout_available_book_marks_unavailable():
     book = make_book()
@@ -221,10 +203,6 @@ def test_checkout_return_lifecycle():
     assert returned["available"] is True
 
 
-# ---------------------------------------------------------------------------
-# DELETE
-# ---------------------------------------------------------------------------
-
 def test_delete_book_returns_true_when_found():
     book = make_book()
     result = book_repo.delete(book["id"])
@@ -238,12 +216,203 @@ def test_delete_book_returns_false_when_not_found():
 
 
 def test_delete_book_cascades_book_authors():
-    """Deleting a book must also remove its book_authors rows (via ON DELETE CASCADE)."""
     author = make_author()
     book = make_book(author_ids=[author["id"]])
 
     book_repo.delete(book["id"])
 
-    # Author must still exist
     still_there = author_repo.get_by_id(author["id"])
     assert still_there is not None
+
+
+# ---------------------------------------------------------------------------
+# API ENDPOINT INTEGRATION TESTS (Task 8 Required Scenarios)
+# ---------------------------------------------------------------------------
+
+def test_api_create_book_with_valid_author(client):
+    """Required: Create a book with valid author -> 201"""
+    author = client.post("/authors", json={"first_name": "Frank", "last_name": "Herbert"}).json()
+    response = client.post(
+        "/books",
+        json={
+            "title": "Dune",
+            "isbn": "9780441172719",
+            "genre": "Sci-Fi",
+            "publication_year": 1965,
+            "author_ids": [author["id"]],
+        },
+    )
+    assert response.status_code == 201
+    data = response.json()
+    assert data["title"] == "Dune"
+    assert data["available"] is True
+    assert len(data["authors"]) == 1
+    assert data["authors"][0]["id"] == author["id"]
+
+
+def test_api_create_book_with_nonexistent_author(client):
+    """Required: Create a book with non-existent author -> 400"""
+    response = client.post(
+        "/books",
+        json={
+            "title": "Ghost Book",
+            "isbn": "9999999999999",
+            "genre": "Mystery",
+            "author_ids": [99999],
+        },
+    )
+    assert response.status_code == 400
+    assert "does not exist" in response.json()["detail"].lower()
+
+
+def test_api_create_book_with_duplicate_isbn(client):
+    """Required: Create a book with duplicate ISBN -> 409"""
+    author = client.post("/authors", json={"first_name": "Ray", "last_name": "Bradbury"}).json()
+    payload = {
+        "title": "Fahrenheit 451",
+        "isbn": "9781451673319",
+        "genre": "Dystopian",
+        "author_ids": [author["id"]],
+    }
+    first_res = client.post("/books", json=payload)
+    assert first_res.status_code == 201
+
+    duplicate_res = client.post("/books", json=payload)
+    assert duplicate_res.status_code == 409
+    assert "already exists" in duplicate_res.json()["detail"].lower()
+
+
+def test_api_checkout_available_book(client):
+    """Required: Check out an available book -> 200"""
+    author = client.post("/authors", json={"first_name": "Isaac", "last_name": "Asimov"}).json()
+    book = client.post(
+        "/books",
+        json={
+            "title": "Foundation",
+            "isbn": "9780553293357",
+            "genre": "Sci-Fi",
+            "author_ids": [author["id"]],
+        },
+    ).json()
+
+    checkout_res = client.post(f"/books/{book['id']}/checkout")
+    assert checkout_res.status_code == 200
+    assert checkout_res.json()["available"] is False
+
+
+def test_api_checkout_already_checked_out_book(client):
+    """Required: Check out an already checked-out book -> 409"""
+    author = client.post("/authors", json={"first_name": "Isaac", "last_name": "Asimov"}).json()
+    book = client.post(
+        "/books",
+        json={
+            "title": "Foundation",
+            "isbn": "9780553293357",
+            "genre": "Sci-Fi",
+            "author_ids": [author["id"]],
+        },
+    ).json()
+
+    # First checkout -> 200
+    client.post(f"/books/{book['id']}/checkout")
+
+    # Second checkout -> 409
+    second_res = client.post(f"/books/{book['id']}/checkout")
+    assert second_res.status_code == 409
+    assert "already checked out" in second_res.json()["detail"].lower()
+
+
+def test_api_checkout_nonexistent_book(client):
+    response = client.post("/books/99999/checkout")
+    assert response.status_code == 404
+
+
+def test_api_return_book(client):
+    author = client.post("/authors", json={"first_name": "C.S.", "last_name": "Lewis"}).json()
+    book = client.post(
+        "/books",
+        json={
+            "title": "Narnia",
+            "isbn": "9780064404990",
+            "genre": "Fantasy",
+            "author_ids": [author["id"]],
+        },
+    ).json()
+
+    client.post(f"/books/{book['id']}/checkout")
+    return_res = client.post(f"/books/{book['id']}/return")
+    assert return_res.status_code == 200
+    assert return_res.json()["available"] is True
+
+
+def test_api_filter_books_by_genre(client):
+    """Required: Filter books by genre -> returns only matching books"""
+    author = client.post("/authors", json={"first_name": "Genre", "last_name": "Author"}).json()
+    client.post("/books", json={"title": "SciFi 1", "isbn": "0000000000001", "genre": "Sci-Fi", "author_ids": [author["id"]]})
+    client.post("/books", json={"title": "History 1", "isbn": "0000000000002", "genre": "History", "author_ids": [author["id"]]})
+    client.post("/books", json={"title": "SciFi 2", "isbn": "0000000000003", "genre": "Sci-Fi", "author_ids": [author["id"]]})
+
+    res = client.get("/books?genre=Sci-Fi")
+    assert res.status_code == 200
+    books = res.json()
+    assert len(books) == 2
+    assert all(b["genre"] == "Sci-Fi" for b in books)
+
+
+def test_api_filter_books_by_availability(client):
+    author = client.post("/authors", json={"first_name": "Avail", "last_name": "Author"}).json()
+    b1 = client.post("/books", json={"title": "Avail Book", "isbn": "1111111111101", "genre": "General", "author_ids": [author["id"]]}).json()
+    b2 = client.post("/books", json={"title": "Busy Book", "isbn": "1111111111102", "genre": "General", "author_ids": [author["id"]]}).json()
+    client.post(f"/books/{b2['id']}/checkout")
+
+    avail_res = client.get("/books?available=true")
+    assert avail_res.status_code == 200
+    assert any(b["id"] == b1["id"] for b in avail_res.json())
+    assert not any(b["id"] == b2["id"] for b in avail_res.json())
+
+
+def test_api_filter_books_by_author_id(client):
+    a1 = client.post("/authors", json={"first_name": "A1", "last_name": "One"}).json()
+    a2 = client.post("/authors", json={"first_name": "A2", "last_name": "Two"}).json()
+    client.post("/books", json={"title": "A1's Book", "isbn": "2222222222201", "genre": "Fiction", "author_ids": [a1["id"]]})
+    client.post("/books", json={"title": "A2's Book", "isbn": "2222222222202", "genre": "Fiction", "author_ids": [a2["id"]]})
+
+    res = client.get(f"/books?author_id={a1['id']}")
+    assert res.status_code == 200
+    books = res.json()
+    assert len(books) == 1
+    assert books[0]["title"] == "A1's Book"
+
+
+def test_api_get_book_by_id(client):
+    author = client.post("/authors", json={"first_name": "J.R.R.", "last_name": "Tolkien"}).json()
+    book = client.post("/books", json={"title": "The Hobbit", "isbn": "9780547928227", "genre": "Fantasy", "author_ids": [author["id"]]}).json()
+
+    res = client.get(f"/books/{book['id']}")
+    assert res.status_code == 200
+    assert res.json()["title"] == "The Hobbit"
+
+
+def test_api_get_book_not_found(client):
+    res = client.get("/books/99999")
+    assert res.status_code == 404
+
+
+def test_api_update_book(client):
+    author = client.post("/authors", json={"first_name": "Ernest", "last_name": "Hemingway"}).json()
+    book = client.post("/books", json={"title": "Old Man", "isbn": "9780684801223", "genre": "Classic", "author_ids": [author["id"]]}).json()
+
+    res = client.put(f"/books/{book['id']}", json={"title": "The Old Man and the Sea"})
+    assert res.status_code == 200
+    assert res.json()["title"] == "The Old Man and the Sea"
+
+
+def test_api_delete_book(client):
+    author = client.post("/authors", json={"first_name": "Mark", "last_name": "Twain"}).json()
+    book = client.post("/books", json={"title": "Tom Sawyer", "isbn": "9780143039563", "genre": "Classic", "author_ids": [author["id"]]}).json()
+
+    del_res = client.delete(f"/books/{book['id']}")
+    assert del_res.status_code == 204
+
+    # Verify deleted
+    assert client.get(f"/books/{book['id']}").status_code == 404
