@@ -197,3 +197,21 @@ def test_api_delete_author_with_books_enforces_policy(client):
 def test_api_delete_author_not_found(client):
     response = client.delete("/authors/99999")
     assert response.status_code == 404
+
+
+def test_api_authors_pagination(client):
+    for i in range(5):
+        client.post("/authors", json={"first_name": f"Author{i}", "last_name": f"LastName{i}"})
+
+    # Page 1
+    res1 = client.get("/authors?limit=2&offset=0")
+    assert res1.status_code == 200
+    assert len(res1.json()) == 2
+    assert res1.json()[0]["first_name"] == "Author0"
+
+    # Page 2
+    res2 = client.get("/authors?limit=2&offset=2")
+    assert res2.status_code == 200
+    assert len(res2.json()) == 2
+    assert res2.json()[0]["first_name"] == "Author2"
+

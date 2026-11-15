@@ -14,7 +14,6 @@ _repo = BookRepository()
 
 
 def create_book(data: BookCreate) -> dict:
-    # DuplicateISBNError and InvalidAuthorError bubble up from the repository
     return _repo.create(data)
 
 
@@ -29,8 +28,20 @@ def get_all_books(
     author_id: Optional[int] = None,
     genre: Optional[str] = None,
     available: Optional[bool] = None,
+    limit: int = 50,
+    offset: int = 0,
 ) -> list[dict]:
-    return _repo.get_all(author_id=author_id, genre=genre, available=available)
+    return _repo.get_all(
+        author_id=author_id,
+        genre=genre,
+        available=available,
+        limit=limit,
+        offset=offset,
+    )
+
+
+def search_books(keyword: str, limit: int = 50, offset: int = 0) -> list[dict]:
+    return _repo.search(keyword=keyword, limit=limit, offset=offset)
 
 
 def update_book(book_id: int, data: BookUpdate) -> dict:
@@ -47,11 +58,8 @@ def delete_book(book_id: int) -> None:
 
 
 def checkout_book(book_id: int) -> dict:
-    # BookNotFoundError and BookAlreadyCheckedOutError bubble up from the repository
     return _repo.checkout(book_id)
 
 
 def return_book(book_id: int) -> dict:
-    # BookNotFoundError bubbles up from the repository
     return _repo.return_book(book_id)
-

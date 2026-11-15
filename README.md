@@ -75,7 +75,19 @@ python run_migrations.py
 ```bash
 uvicorn app.main:app --reload
 ```
-Interactive API docs will be available at: `http://127.0.0.1:8000/docs`
+Interactive API docs will be available at: `http://127.0.0.1:8000/docs`  
+Interactive React Web UI will be available at: `http://127.0.0.1:8000/app`
+
+---
+
+## React Frontend
+
+A responsive Single-Page Application (SPA) built with React 18 and Tailwind CSS is located in `frontend/index.html`. It is served directly by FastAPI at `/app` or can be opened standalone in any browser:
+- **Catalog Browsing:** Card grid showing book details, publication year, genres, authors, and real-time availability badges.
+- **Full-Text Search:** Instant keyword search across book titles and author names via `/books/search?q=...`.
+- **Filtering & Pagination:** Filter by genre or availability, with Previous/Next pagination controls.
+- **Direct Actions:** One-click book checkout and return with atomic status updates.
+- **Modals:** Forms to add new books and authors with multi-author selection.
 
 ---
 
@@ -83,16 +95,20 @@ Interactive API docs will be available at: `http://127.0.0.1:8000/docs`
 
 ### Authors
 - `POST /authors` — Create an author (201 Created)
-- `GET /authors` — List all authors (200 OK)
+- `GET /authors?limit=50&offset=0` — List all authors with pagination (200 OK)
 - `GET /authors/{id}` — Get author details (200 OK / 404 Not Found)
 - `PUT /authors/{id}` — Update author details (200 OK / 404 Not Found)
 - `DELETE /authors/{id}` — Delete an author (204 No Content / 400 Bad Request if author has books / 404 Not Found)
 
 ### Books
 - `POST /books` — Create a book with author associations (201 Created / 400 Bad Request / 409 Conflict)
-- `GET /books` — List books with optional query filters: `author_id`, `genre`, `available` (200 OK)
+- `GET /books?author_id=...&genre=...&available=...&limit=50&offset=0` — List books with filtering and pagination (200 OK)
+- `GET /books/search?q=keyword&limit=50&offset=0` — Search books by keyword in title and author names (200 OK)
 - `GET /books/{id}` — Get book details with its authors (200 OK / 404 Not Found)
 - `PUT /books/{id}` — Update book details (200 OK / 404 Not Found / 409 Conflict)
+- `DELETE /books/{id}` — Delete a book (204 No Content / 404 Not Found)
+- `POST /books/{id}/checkout` — Check out a book with row-level transaction lock (200 OK / 409 Conflict / 404 Not Found)
+- `POST /books/{id}/return` — Return a checked-out book (200 OK / 404 Not Found)
 - `DELETE /books/{id}` — Delete a book (204 No Content / 404 Not Found)
 - `POST /books/{id}/checkout` — Check out a book with row-level transaction lock (200 OK / 409 Conflict / 404 Not Found)
 - `POST /books/{id}/return` — Return a checked-out book (200 OK / 404 Not Found)

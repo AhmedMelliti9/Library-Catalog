@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Query
 from app.models.author import AuthorCreate, AuthorUpdate, AuthorResponse
 from app.services import author_service
 from app.exceptions import AuthorNotFoundError, AuthorHasBooksError
@@ -12,8 +12,11 @@ def create_author(data: AuthorCreate):
 
 
 @router.get("", response_model=list[AuthorResponse])
-def get_all_authors():
-    return author_service.get_all_authors()
+def get_all_authors(
+    limit: int = Query(50, ge=1, le=100, description="Number of authors to return"),
+    offset: int = Query(0, ge=0, description="Offset for pagination"),
+):
+    return author_service.get_all_authors(limit=limit, offset=offset)
 
 
 @router.get("/{author_id}", response_model=AuthorResponse)
@@ -40,4 +43,3 @@ def delete_author(author_id: int):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except AuthorHasBooksError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-

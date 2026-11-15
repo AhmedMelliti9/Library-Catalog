@@ -1,13 +1,18 @@
 """
 author_repository.py
 All SQL for the authors table lives here.
-Every query uses parameterized queries — never string concatenation with user input.
+Every query uses parameterized queries and psycopg2.sql identifier escaping
+to strictly eliminate SQL injection vulnerabilities.
 """
 
+from typing import Optional
 import psycopg2
+from psycopg2 import sql
 from psycopg2.extras import RealDictCursor
 from app.database.connection import get_connection
 from app.models.author import AuthorCreate, AuthorUpdate
+
+ALLOWED_AUTHOR_COLUMNS = {"first_name", "last_name", "nationality"}
 
 
 class AuthorRepository:
@@ -44,12 +49,15 @@ class AuthorRepository:
         finally:
             conn.close()
 
-    def get_all(self) -> list[dict]:
-        """Return all authors."""
+    def get_all(self, limit: int = 50, offset: int = 0) -> list[dict]:
+        """Return authors with pagination."""
         conn = get_connection()
         try:
             with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                cursor.execute("SELECT * FROM authors ORDER BY id")
+                cursor.execute(
+                    "SELECT * FROM authors ORDER BY id LIMIT %s OFFSET %s",
+                    (limit, offset),
+                )
                 return [dict(row) for row in cursor.fetchall()]
         finally:
             conn.close()
@@ -57,25 +65,30 @@ class AuthorRepository:
     def update(self, author_id: int, data: AuthorUpdate) -> dict | None:
         """
         Update only the fields provided in data.
+        Uses psycopg2.sql.Identifier to strictly escape column names against a whitelist.
         Returns the updated author, or None if not found.
         """
-        # Build SET clause dynamically from the non-None fields
-        fields = {k: v for k, v in data.model_dump().items() if v is not None}
-        if not fields:
-            # Nothing to update — just return the current author
+        # Validate columns against strict whitelist
+        raw_fields = data.model_dump(exclude_unset=True)
+        valid_fields = {k: v for k, v in raw_fields.items() if k in ALLOWED_AUTHOR_COLUMNS and v is not None}
+
+        if not valid_fields:
             return self.get_by_id(author_id)
 
-        set_clause = ", ".join(f"{col} = %s" for col in fields)
-        values = list(fields.values()) + [author_id]
+        set_parts = [
+            sql.SQL("{} = %s").format(sql.Identifier(col))
+            for col in valid_fields.keys()
+        ]
+        set_clause = sql.SQL(", ").join(set_parts)
+
+        query = sql.SQL("UPDATE authors SET {} WHERE id = %s RETURNING *").format(set_clause)
+        values = list(valid_fields.values()) + [author_id]
 
         conn = get_connection()
         try:
             with conn:
                 with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                    cursor.execute(
-                        f"UPDATE authors SET {set_clause} WHERE id = %s RETURNING *",
-                        values,
-                    )
+                    cursor.execute(query, values)
                     row = cursor.fetchone()
                     return dict(row) if row else None
         finally:

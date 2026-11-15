@@ -1,14 +1,17 @@
 """
 book_repository.py
 All SQL for the books and book_authors tables lives here.
-Every query uses parameterized queries — never string concatenation with user input.
+Every query uses parameterized queries and psycopg2.sql identifier escaping
+to strictly eliminate SQL injection vulnerabilities.
 
 Key rule from project.md:
   - create() uses a transaction (INSERT book + INSERT book_authors atomically)
   - checkout() uses a transaction with SELECT ... FOR UPDATE to prevent race conditions
 """
 
+from typing import Optional
 import psycopg2
+from psycopg2 import sql
 from psycopg2.extras import RealDictCursor
 from app.database.connection import get_connection
 from app.models.book import BookCreate, BookUpdate
@@ -18,6 +21,8 @@ from app.exceptions import (
     DuplicateISBNError,
     InvalidAuthorError,
 )
+
+ALLOWED_BOOK_COLUMNS = {"title", "isbn", "genre", "publication_year"}
 
 
 def _row_to_book(book_row: dict, author_rows: list[dict]) -> dict:
@@ -128,12 +133,19 @@ class BookRepository:
             conn.close()
 
     # ------------------------------------------------------------------
-    # GET ALL — supports filtering by author_id, genre, available
+    # GET ALL — supports filtering and pagination
     # ------------------------------------------------------------------
 
-    def get_all(self, author_id: int | None = None, genre: str | None = None, available: bool | None = None) -> list[dict]:
+    def get_all(
+        self,
+        author_id: int | None = None,
+        genre: str | None = None,
+        available: bool | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict]:
         """
-        Return all books, with optional filters.
+        Return all books, with optional filters and pagination.
         Builds a parameterized WHERE clause dynamically from provided filters.
         """
         conn = get_connection()
@@ -158,9 +170,48 @@ class BookRepository:
 
                 where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
+                query = f"SELECT * FROM books b {where_clause} ORDER BY b.id LIMIT %s OFFSET %s"
+                params.extend([limit, offset])
+
+                cursor.execute(query, params)
+                book_rows = cursor.fetchall()
+
+                books = []
+                for book_row in book_rows:
+                    author_rows = _fetch_authors_for_book(cursor, book_row["id"])
+                    books.append(_row_to_book(book_row, author_rows))
+                return books
+        finally:
+            conn.close()
+
+    # ------------------------------------------------------------------
+    # SEARCH — keyword search on title and author names (Parameterized)
+    # ------------------------------------------------------------------
+
+    def search(self, keyword: str, limit: int = 50, offset: int = 0) -> list[dict]:
+        """
+        Search books by keyword across book title and author first/last name.
+        Uses 100% parameterized ILIKE queries to prevent SQL injection.
+        """
+        conn = get_connection()
+        try:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                pattern = f"%{keyword}%"
+                query = """
+                    SELECT DISTINCT b.*
+                    FROM books b
+                    LEFT JOIN book_authors ba ON b.id = ba.book_id
+                    LEFT JOIN authors a ON ba.author_id = a.id
+                    WHERE b.title ILIKE %s
+                       OR a.first_name ILIKE %s
+                       OR a.last_name ILIKE %s
+                       OR (a.first_name || ' ' || a.last_name) ILIKE %s
+                    ORDER BY b.id
+                    LIMIT %s OFFSET %s
+                """
                 cursor.execute(
-                    f"SELECT * FROM books b {where_clause} ORDER BY b.id",
-                    params,
+                    query,
+                    (pattern, pattern, pattern, pattern, limit, offset),
                 )
                 book_rows = cursor.fetchall()
 
@@ -179,27 +230,32 @@ class BookRepository:
     def update(self, book_id: int, data: BookUpdate) -> dict | None:
         """
         Update only the provided fields.
+        Uses psycopg2.sql.Identifier to strictly escape column names against a whitelist.
         Also updates updated_at timestamp.
         Returns the updated book or None if not found.
         """
-        fields = {k: v for k, v in data.model_dump().items() if v is not None}
-        if not fields:
+        raw_fields = data.model_dump(exclude_unset=True)
+        valid_fields = {k: v for k, v in raw_fields.items() if k in ALLOWED_BOOK_COLUMNS and v is not None}
+
+        if not valid_fields:
             return self.get_by_id(book_id)
 
-        # Always update updated_at
-        set_parts = [f"{col} = %s" for col in fields] + ["updated_at = NOW()"]
-        set_clause = ", ".join(set_parts)
-        values = list(fields.values()) + [book_id]
+        set_parts = [
+            sql.SQL("{} = %s").format(sql.Identifier(col))
+            for col in valid_fields.keys()
+        ]
+        set_parts.append(sql.SQL("updated_at = NOW()"))
+        set_clause = sql.SQL(", ").join(set_parts)
+
+        query = sql.SQL("UPDATE books SET {} WHERE id = %s RETURNING *").format(set_clause)
+        values = list(valid_fields.values()) + [book_id]
 
         conn = get_connection()
         try:
             conn.autocommit = False
             with conn.cursor(cursor_factory=RealDictCursor) as cursor:
                 try:
-                    cursor.execute(
-                        f"UPDATE books SET {set_clause} WHERE id = %s RETURNING *",
-                        values,
-                    )
+                    cursor.execute(query, values)
                 except psycopg2.errors.UniqueViolation:
                     conn.rollback()
                     raise DuplicateISBNError(
@@ -231,20 +287,12 @@ class BookRepository:
     def checkout(self, book_id: int) -> dict:
         """
         Mark a book as unavailable (checked out).
-
-        Uses a transaction with SELECT ... FOR UPDATE to lock the row,
-        preventing two simultaneous checkouts from both seeing available=true
-        (race condition).
-
-        Raises:
-            BookNotFoundError: if the book does not exist.
-            BookAlreadyCheckedOutError: if the book is already checked out.
+        Uses a transaction with SELECT ... FOR UPDATE to lock the row.
         """
         conn = get_connection()
         try:
             conn.autocommit = False
             with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                # Lock the row for the duration of this transaction
                 cursor.execute(
                     "SELECT id, available FROM books WHERE id = %s FOR UPDATE",
                     (book_id,),
@@ -261,7 +309,6 @@ class BookRepository:
                         f"Book with id {book_id} is already checked out."
                     )
 
-                # Safe to mark as unavailable
                 cursor.execute(
                     "UPDATE books SET available = false, updated_at = NOW() WHERE id = %s RETURNING *",
                     (book_id,),
@@ -287,7 +334,6 @@ class BookRepository:
     def return_book(self, book_id: int) -> dict:
         """
         Mark a book as available (returned).
-        Raises BookNotFoundError if the book does not exist.
         """
         conn = get_connection()
         try:
@@ -324,7 +370,6 @@ class BookRepository:
         """
         Delete a book by ID.
         book_authors rows are deleted automatically via ON DELETE CASCADE.
-        Returns True if deleted, False if not found.
         """
         conn = get_connection()
         try:
