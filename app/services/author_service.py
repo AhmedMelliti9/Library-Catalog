@@ -5,6 +5,7 @@ Calls the AuthorRepository — never writes SQL directly.
 Raises domain exceptions that routes convert to HTTP responses.
 """
 
+from typing import Optional
 from app.repositories.author_repository import AuthorRepository
 from app.models.author import AuthorCreate, AuthorUpdate
 from app.exceptions import AuthorNotFoundError, AuthorHasBooksError
@@ -23,8 +24,8 @@ def get_author(author_id: int) -> dict:
     return author
 
 
-def get_all_authors() -> list[dict]:
-    return _repo.get_all()
+def get_all_authors(limit: int = 50, offset: int = 0) -> list[dict]:
+    return _repo.get_all(limit=limit, offset=offset)
 
 
 def update_author(author_id: int, data: AuthorUpdate) -> dict:
@@ -43,4 +44,3 @@ def delete_author(author_id: int) -> None:
             f"Cannot delete author with id {author_id} because they have associated books."
         )
     _repo.delete(author_id)
-

@@ -416,3 +416,104 @@ def test_api_delete_book(client):
 
     # Verify deleted
     assert client.get(f"/books/{book['id']}").status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# SEARCH & PAGINATION & SQL INJECTION TESTS
+# ---------------------------------------------------------------------------
+
+def test_api_search_books_by_title(client):
+    author = client.post("/authors", json={"first_name": "George", "last_name": "Orwell"}).json()
+    client.post("/books", json={"title": "Animal Farm", "isbn": "9780451526342", "genre": "Satire", "author_ids": [author["id"]]})
+    client.post("/books", json={"title": "Nineteen Eighty-Four", "isbn": "9780451524935", "genre": "Dystopian", "author_ids": [author["id"]]})
+
+    res = client.get("/books/search?q=Animal")
+    assert res.status_code == 200
+    results = res.json()
+    assert len(results) == 1
+    assert results[0]["title"] == "Animal Farm"
+
+
+def test_api_search_books_by_author_name(client):
+    a1 = client.post("/authors", json={"first_name": "Agatha", "last_name": "Christie"}).json()
+    a2 = client.post("/authors", json={"first_name": "Arthur", "last_name": "Conan Doyle"}).json()
+
+    client.post("/books", json={"title": "Death on the Nile", "isbn": "9780007119325", "genre": "Mystery", "author_ids": [a1["id"]]})
+    client.post("/books", json={"title": "A Study in Scarlet", "isbn": "9780141023472", "genre": "Mystery", "author_ids": [a2["id"]]})
+
+    # Search by author's last name
+    res = client.get("/books/search?q=Christie")
+    assert res.status_code == 200
+    results = res.json()
+    assert len(results) == 1
+    assert results[0]["title"] == "Death on the Nile"
+
+    # Search by author's full name
+    res2 = client.get("/books/search?q=Conan Doyle")
+    assert res2.status_code == 200
+    assert len(res2.json()) == 1
+    assert res2.json()[0]["title"] == "A Study in Scarlet"
+
+
+def test_api_search_books_sql_injection_attempt_safe(client):
+    """
+    Verify that classic SQL injection payloads are treated safely as raw search strings
+    via parameterized queries and do not cause syntax errors or leak all rows.
+    """
+    author = client.post("/authors", json={"first_name": "Safe", "last_name": "Author"}).json()
+    client.post("/books", json={"title": "Safe Book", "isbn": "5555555555555", "genre": "Safety", "author_ids": [author["id"]]})
+
+    # Injected OR condition should NOT return rows unless the literal title contains it
+    injection_payload = "' OR '1'='1"
+    res = client.get(f"/books/search?q={injection_payload}")
+    assert res.status_code == 200
+    assert res.json() == []
+
+    # Injected comment syntax should also be treated safely
+    drop_payload = "'; DROP TABLE books; --"
+    res2 = client.get(f"/books/search?q={drop_payload}")
+    assert res2.status_code == 200
+    assert res2.json() == []
+
+    # Verify table is still completely intact
+    verify_res = client.get("/books")
+    assert verify_res.status_code == 200
+    assert len(verify_res.json()) == 1
+
+
+def test_api_books_pagination(client):
+    author = client.post("/authors", json={"first_name": "Paginator", "last_name": "Author"}).json()
+    for i in range(5):
+        client.post(
+            "/books",
+            json={
+                "title": f"Page Book {i}",
+                "isbn": f"900000000000{i}",
+                "genre": "Fiction",
+                "author_ids": [author["id"]],
+            },
+        )
+
+    # First page: limit 2, offset 0
+    res_p1 = client.get("/books?limit=2&offset=0")
+    assert res_p1.status_code == 200
+    p1_books = res_p1.json()
+    assert len(p1_books) == 2
+    assert p1_books[0]["title"] == "Page Book 0"
+    assert p1_books[1]["title"] == "Page Book 1"
+
+    # Second page: limit 2, offset 2
+    res_p2 = client.get("/books?limit=2&offset=2")
+    assert res_p2.status_code == 200
+    p2_books = res_p2.json()
+    assert len(p2_books) == 2
+    assert p2_books[0]["title"] == "Page Book 2"
+    assert p2_books[1]["title"] == "Page Book 3"
+
+    # Third page: limit 2, offset 4
+    res_p3 = client.get("/books?limit=2&offset=4")
+    assert res_p3.status_code == 200
+    p3_books = res_p3.json()
+    assert len(p3_books) == 1
+    assert p3_books[0]["title"] == "Page Book 4"
+

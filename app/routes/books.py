@@ -27,8 +27,29 @@ def get_all_books(
     author_id: Optional[int] = Query(None, description="Filter by author ID"),
     genre: Optional[str] = Query(None, description="Filter by genre"),
     available: Optional[bool] = Query(None, description="Filter by availability"),
+    limit: int = Query(50, ge=1, le=100, description="Number of books to return"),
+    offset: int = Query(0, ge=0, description="Offset for pagination"),
 ):
-    return book_service.get_all_books(author_id=author_id, genre=genre, available=available)
+    return book_service.get_all_books(
+        author_id=author_id,
+        genre=genre,
+        available=available,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/search", response_model=list[BookResponse])
+def search_books(
+    q: str = Query(..., min_length=1, description="Search keyword for book title or author name"),
+    limit: int = Query(50, ge=1, le=100, description="Number of books to return"),
+    offset: int = Query(0, ge=0, description="Offset for pagination"),
+):
+    """
+    Search books across book title and author first/last name.
+    Fully parameterized against SQL injection.
+    """
+    return book_service.search_books(keyword=q, limit=limit, offset=offset)
 
 
 @router.get("/{book_id}", response_model=BookResponse)

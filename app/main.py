@@ -1,7 +1,10 @@
+from pathlib import Path
 import logging
 import psycopg2
 from fastapi import FastAPI, Request, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.routes.authors import router as authors_router
 from app.routes.books import router as books_router
@@ -24,12 +27,34 @@ app = FastAPI(
     version="1.0.0",
 )
 
+# Enable CORS for React frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.include_router(authors_router)
 app.include_router(books_router)
 
+FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
+
+if FRONTEND_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
+
+
+@app.get("/app", include_in_schema=False)
+def serve_frontend():
+    index_file = FRONTEND_DIR / "index.html"
+    if index_file.exists():
+        return FileResponse(str(index_file))
+    return {"message": "Frontend not yet built."}
+
 
 # ---------------------------------------------------------------------------
-# Global Exception Handlers — Structured Error Responses (Task 6)
+# Global Exception Handlers — Structured Error Responses
 # ---------------------------------------------------------------------------
 
 @app.exception_handler(AuthorNotFoundError)
@@ -108,7 +133,6 @@ async def operational_error_handler(request: Request, exc: psycopg2.OperationalE
 
 @app.exception_handler(psycopg2.Error)
 async def database_error_handler(request: Request, exc: psycopg2.Error):
-    # Log the internal details, never expose raw DB errors to the client
     logger.error(f"Database error occurred: {exc}")
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -118,4 +142,8 @@ async def database_error_handler(request: Request, exc: psycopg2.Error):
 
 @app.get("/")
 def root():
-    return {"message": "Welcome to Library Catalog API"}
+    return {
+        "message": "Welcome to Library Catalog API",
+        "docs": "/docs",
+        "frontend": "/app",
+    }
